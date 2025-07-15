@@ -13,8 +13,8 @@ class GmailDownloadCommand extends Command
 
     public function handle(): void
     {
-        $gmail_username = '';
-        $gmail_password = ''; // 16 caracteres sem espaços
+        $gmail_username = 'junior@lemitti.com';
+        $gmail_password = env('GMAIL_PASS'); // 16 caracteres sem espaços
 
 // Diretório onde salvar os emails (será criado se não existir)
         $download_directory = storage_path($gmail_username . '/gmail_backup/' );

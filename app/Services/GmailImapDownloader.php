@@ -164,13 +164,21 @@ class GmailImapDownloader
         // Obter cabeçalho do email para gerar nome do arquivo
         $header = imap_headerinfo($this->connection, $messageNumber);
 
-        // Gerar nome do arquivo baseado na data e assunto
-        $date = date('Y-m-d_H-i-s', $header->udate);
-        $subject = isset($header->subject) ? $header->subject : 'Sem_Assunto';
-        $subject = $this->sanitizeFilename($subject);
-        $subject = substr($subject, 0, 50); // Limitar tamanho do nome
+        // Verificar se o cabeçalho foi obtido com sucesso
+        if ($header === false) {
+            // Se falhar, usar valores padrão
+            $date = date('Y-m-d_H-i-s');
+            $subject = 'Email_Sem_Cabecalho';
+            $filename = "{$date}_{$messageNumber}_{$subject}.eml";
+        } else {
+            // Gerar nome do arquivo baseado na data e assunto
+            $date = date('Y-m-d_H-i-s', $header->udate);
+            $subject = isset($header->subject) ? $header->subject : 'Sem_Assunto';
+            $subject = $this->sanitizeFilename($subject);
+            $subject = substr($subject, 0, 50); // Limitar tamanho do nome
+            $filename = "{$date}_{$messageNumber}_{$subject}.eml";
+        }
 
-        $filename = "{$date}_{$messageNumber}_{$subject}.eml";
         $filepath = $folderPath.'/'.$filename;
 
         // Verificar se arquivo já existe
