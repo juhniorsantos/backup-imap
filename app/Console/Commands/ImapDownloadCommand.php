@@ -6,6 +6,8 @@ use App\Models\Account;
 use App\Models\Mail;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Process;
+use Illuminate\Support\Collection;
 use Exception;
 
 class ImapDownloadCommand extends Command
@@ -15,7 +17,7 @@ class ImapDownloadCommand extends Command
      *
      * @var string
      */
-    protected $signature = 'imap:download {account_id? : ID da conta para baixar emails} {--limit=100 : Limite de emails por execução}';
+    protected $signature = 'imap:download {account_id? : ID da conta para baixar emails} {--limit=10000 : Limite de emails por execução} {--parallel=4 : Número de processos paralelos}';
 
     /**
      * The console command description.
@@ -31,6 +33,7 @@ class ImapDownloadCommand extends Command
     {
         $accountId = $this->argument('account_id');
         $limit = $this->option('limit') ?? 15000;
+        $parallel = $this->option('parallel') ?? 4;
 
         if ($accountId) {
             $accounts = Account::where('id', $accountId)->get();
@@ -42,7 +45,11 @@ class ImapDownloadCommand extends Command
             $this->info("Baixando emails da conta: {$account->user}");
 
             try {
-                $this->downloadAccountEmails($account, $limit);
+                if ($parallel > 1) {
+                    $this->downloadAccountEmailsParallel($account, $limit, $parallel);
+                } else {
+                    $this->downloadAccountEmails($account, $limit);
+                }
 
                 // Verificar se todos os emails foram baixados
                 $pendingCount = $account->mails()->where('downloaded', false)->count();
@@ -191,5 +198,105 @@ class ImapDownloadCommand extends Command
         $filename = preg_replace('/[^a-zA-Z0-9\-\_\.]/', '_', $filename);
         $filename = preg_replace('/_+/', '_', $filename); // Remove underscores múltiplos
         return trim($filename, '_');
+    }
+
+    private function downloadAccountEmailsParallel(Account $account, $limit, $parallel)
+    {
+        // Buscar emails pendentes agrupados por pasta
+        $pendingMails = $account->mails()
+            ->where('downloaded', false)
+            ->whereNotNull('folder')
+            ->orderBy('folder')
+            ->limit($limit)
+            ->get()
+            ->groupBy('folder');
+
+        $totalPending = $pendingMails->flatten()->count();
+        $this->info("  Emails pendentes: " . $totalPending);
+
+        foreach ($pendingMails as $folder => $mails) {
+            $currentFolder = str_replace('{imap.gmail.com:993/imap/ssl}', '', $folder);
+            $this->info("  Processando pasta: " . $currentFolder);
+
+            // Dividir emails em lotes menores para evitar timeout
+            $batchSize = min(50, ceil($mails->count() / $parallel));
+            $chunks = $mails->chunk($batchSize);
+
+            $bar = $this->output->createProgressBar($mails->count());
+            $bar->start();
+
+            $processes = [];
+            $mailIds = $mails->pluck('id')->toArray();
+
+            foreach ($chunks as $index => $chunk) {
+                $emailIds = $chunk->pluck('id')->toArray();
+
+                $process = Process::timeout(30000)->start([
+                    'php',
+                    'artisan',
+                    'imap:download-batch',
+                    $account->id,
+                    $folder,
+                    implode(',', $emailIds)
+                ]);
+
+                $processes[] = $process;
+
+                // Limitar processos simultâneos
+                if (count($processes) >= $parallel) {
+                    // Aguardar pelo menos um processo terminar
+                    $this->waitForAnyProcess($processes);
+                }
+            }
+
+            // Monitorar progresso em tempo real
+            $completed = 0;
+            while ($completed < $mails->count()) {
+                $newCompleted = Mail::whereIn('id', $mailIds)
+                    ->where('downloaded', true)
+                    ->count();
+
+                if ($newCompleted > $completed) {
+                    $bar->advance($newCompleted - $completed);
+                    $completed = $newCompleted;
+                }
+
+                // Verificar se todos os processos terminaram
+                $allFinished = true;
+                foreach ($processes as $process) {
+                    if ($process->running()) {
+                        $allFinished = false;
+                        break;
+                    }
+                }
+
+                if ($allFinished) {
+                    break;
+                }
+
+                usleep(100000); // 0.1 segundo
+            }
+
+            // Aguardar todos os processos terminarem
+            foreach ($processes as $process) {
+                $process->wait();
+            }
+
+            $bar->finish();
+            $this->newLine();
+        }
+    }
+
+    private function waitForAnyProcess(&$processes)
+    {
+        while (count($processes) > 0) {
+            foreach ($processes as $key => $process) {
+                if (!$process->running()) {
+                    unset($processes[$key]);
+                    return;
+                }
+            }
+            usleep(100000); // 0.1 segundo
+        }
     }
 }
