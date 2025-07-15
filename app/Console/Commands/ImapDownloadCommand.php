@@ -84,22 +84,23 @@ class ImapDownloadCommand extends Command
             $this->info("  Emails pendentes: " . $totalPending);
 
             foreach ($pendingMails as $folder => $mails) {
-                $this->info("  Processando pasta: " . str_replace($host, '', $folder));
-                
+                $currentFolder = str_replace($host, '', $folder);
+                $this->info("  Processando pasta: " . $currentFolder);
+
                 // Abrir a pasta
                 imap_reopen($connection, $folder);
-                
+
                 $bar = $this->output->createProgressBar($mails->count());
-                
+
                 foreach ($mails as $mail) {
                     try {
-                        $this->downloadSingleEmail($connection, $account, $mail);
+                        $this->downloadSingleEmail($connection, $account, $mail, $currentFolder);
                         $bar->advance();
                     } catch (Exception $e) {
                         $this->error("\n  Erro ao baixar email {$mail->uuid}: " . $e->getMessage());
                     }
                 }
-                
+
                 $bar->finish();
                 $this->newLine();
             }
@@ -109,16 +110,16 @@ class ImapDownloadCommand extends Command
         }
     }
 
-    private function downloadSingleEmail($connection, Account $account, Mail $mail)
+    private function downloadSingleEmail($connection, Account $account, Mail $mail, $currentFolder)
     {
         // Criar diretório para a conta se não existir
-        $accountDir = 'emails/' . $this->sanitizeFilename($account->user);
+        $accountDir = 'emails/' . $this->sanitizeFilename($account->user) . '/' . $currentFolder;
         Storage::makeDirectory($accountDir);
 
         // Se temos o número da mensagem, usar diretamente
         if ($mail->message_number) {
             $messageNumber = $mail->message_number;
-            
+
             // Verificar se o número ainda é válido
             $totalMessages = imap_num_msg($connection);
             if ($messageNumber > $totalMessages) {
