@@ -10,6 +10,8 @@ class Mail extends Model
     protected $fillable = [
         'account_id',
         'uuid',
+        'message_number',
+        'folder',
         'downloaded',
         'filename'
     ];
