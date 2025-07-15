@@ -45,21 +45,28 @@ class ImapDownloadCommand extends Command
             $this->info("Baixando emails da conta: {$account->user}");
 
             try {
-                if ($parallel > 1) {
-                    $this->downloadAccountEmailsParallel($account, $limit, $parallel);
-                } else {
-                    $this->downloadAccountEmails($account, $limit);
-                }
-
-                // Verificar se todos os emails foram baixados
-                $pendingCount = $account->mails()->where('downloaded', false)->count();
-
-                if ($pendingCount == 0) {
-                    $account->update(['completed' => now()]);
-                    $this->info("Conta {$account->user} completamente baixada!");
-                } else {
-                    $this->info("Conta {$account->user}: ainda restam {$pendingCount} emails para baixar.");
-                }
+                // Loop contínuo até não haver mais mensagens pendentes
+                do {
+                    $pendingCount = $account->mails()->where('downloaded', false)->count();
+                    
+                    if ($pendingCount == 0) {
+                        $account->update(['completed' => now()]);
+                        $this->info("Conta {$account->user} completamente baixada!");
+                        break;
+                    }
+                    
+                    $this->info("Ainda restam {$pendingCount} emails para baixar...");
+                    
+                    if ($parallel > 1) {
+                        $this->downloadAccountEmailsParallel($account, $limit, $parallel);
+                    } else {
+                        $this->downloadAccountEmails($account, $limit);
+                    }
+                    
+                    // Pequena pausa entre iterações
+                    sleep(1);
+                    
+                } while ($pendingCount > 0);
 
             } catch (Exception $e) {
                 $this->error("Erro ao baixar emails da conta {$account->user}: " . $e->getMessage());
